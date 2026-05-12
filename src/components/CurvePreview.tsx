@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { ColorCurve } from '../types';
+import { cn } from '../lib/utils';
 
 interface CurvePreviewProps {
   curve: ColorCurve;
@@ -28,6 +29,47 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [scale, setScale] = useState(1.0);
   const [offset, setOffset] = useState(0.0);
+  
+  const [enableSplits, setEnableSplits] = useState(false);
+  const [splitText, setSplitText] = useState('60, 30, 10');
+
+  const regions = useMemo(() => {
+    const parsedSplits = splitText
+        .split(/[,/ ]+/)
+        .map(s => parseFloat(s.trim()))
+        .filter(n => !isNaN(n) && n > 0);
+        
+    if (parsedSplits.length === 0) return [];
+    
+    const totalSplit = parsedSplits.reduce((a, b) => a + b, 0);
+    const splitWeights = parsedSplits.map(s => s / totalSplit);
+
+    let currentArea = 0;
+    return splitWeights.map((w, i) => {
+        const areaStart = currentArea;
+        const areaEnd = currentArea + w;
+        currentArea = areaEnd;
+        const N = splitWeights.length;
+        
+        // Map to uniform segments of the curve time (0..1)
+        const curveStart = i / N;
+        const curveEnd = (i + 1) / N;
+        
+        const rScale = w > 0 ? (curveEnd - curveStart) / w : 0;
+        const rOffset = curveStart - rScale * areaStart;
+        
+        return {
+            index: i + 1,
+            percentage: w * 100,
+            areaStart,
+            areaEnd,
+            curveStart,
+            curveEnd,
+            scale: rScale,
+            offset: rOffset
+        };
+    });
+  }, [splitText]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -59,8 +101,32 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
         const dy = (y - cy) / maxDist;
         const d = Math.sqrt(dx * dx + dy * dy);
         
-        // Input time based on distance, scale, and offset
-        const t = d * scale + offset;
+        // 1. Base Radial Scale & Offset
+        const dAdj = d * scale + offset;
+        
+        let t = dAdj;
+
+        // 2. Elegant Math Splits via Area substitution Matrix
+        if (enableSplits && regions.length > 0) {
+            if (dAdj <= 0) {
+                t = 0;
+            } else if (dAdj >= 1) {
+                t = 1;
+            } else {
+                const A = dAdj * dAdj; // Domain warp to Area space
+                
+                let matchedRegion = regions[regions.length - 1]; // fallback last
+                for(let i=0; i<regions.length; i++) {
+                    if (A <= regions[i].areaEnd) {
+                        matchedRegion = regions[i];
+                        break;
+                    }
+                }
+                
+                // Matrix application
+                t = A * matchedRegion.scale + matchedRegion.offset;
+            }
+        }
         
         // Evaluate curve at time `t`
         const r = interpolateChannel(sortedCurve.r, t);
@@ -83,7 +149,7 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
     }
 
     ctx.putImageData(imageData, 0, 0);
-  }, [curve, scale, offset]);
+  }, [curve, scale, offset, enableSplits, regions]);
 
   return (
     <div className="flex flex-col gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4">
@@ -92,7 +158,7 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
       </div>
       
       <div 
-        className="relative w-full aspect-square rounded-lg overflow-hidden border border-zinc-800"
+        className="relative w-full aspect-square rounded-lg overflow-hidden border border-zinc-800 shadow-inner"
         style={{
           backgroundColor: '#09090b',
           backgroundImage: `
@@ -115,7 +181,7 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
       <div className="space-y-4 pt-2">
         <div className="space-y-2">
           <div className="flex justify-between text-xs text-zinc-400">
-            <label>Scale</label>
+            <label>Radial Scale</label>
             <span>{scale.toFixed(2)}</span>
           </div>
           <input 
@@ -131,7 +197,7 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
         
         <div className="space-y-2">
           <div className="flex justify-between text-xs text-zinc-400">
-            <label>Offset</label>
+            <label>Radial Offset</label>
             <span>{offset.toFixed(2)}</span>
           </div>
           <input 
@@ -145,6 +211,56 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
           />
         </div>
       </div>
+
+      {/* Elegant Split Math Rules */}
+      <div className="space-y-3 pt-4 border-t border-zinc-800">
+          <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium text-zinc-300">Elegant Split (Area Remap)</h4>
+              <button 
+                  onClick={() => setEnableSplits(!enableSplits)}
+                  className={cn("text-xs px-2 py-1 rounded transition-colors border", 
+                    enableSplits 
+                    ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/30" 
+                    : "bg-[#09090b] text-zinc-500 border-zinc-800 hover:text-zinc-300"
+                  )}
+              >
+                  {enableSplits ? 'Active' : 'Enable'}
+              </button>
+          </div>
+          
+          <div className={cn("transition-all duration-300 overflow-hidden", enableSplits ? "opacity-100 max-h-64" : "opacity-0 max-h-0")}>
+              <div className="space-y-3">
+                  <p className="text-[10px] text-zinc-500 leading-relaxed">
+                      Distributes curve phases across visual area (d²) instead of linear distance. 
+                      A piecewise scale/offset matrix transforms the distance metric to solve the radii perfectly.
+                  </p>
+                  
+                  <input 
+                      type="text" 
+                      value={splitText} 
+                      onChange={e => setSplitText(e.target.value)}
+                      placeholder="e.g. 60, 30, 10"
+                      className="w-full bg-[#09090b] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 font-mono outline-none focus:border-indigo-500/50"
+                  />
+                  
+                  {regions.length > 0 && (
+                      <div className="bg-[#09090b] p-3 rounded-lg border border-zinc-800 font-mono text-[10px] text-zinc-400 space-y-1">
+                          <div className="text-indigo-400/80 mb-2">// Scale/Offset Matrix: t = A * S + O</div>
+                          {regions.map(r => (
+                              <div key={r.index} className="flex justify-between gap-4">
+                                  <span>Phase {r.index} ({r.percentage.toFixed(0)}%)</span>
+                                  <span className="text-zinc-300">
+                                      S: {r.scale.toFixed(3).padStart(5, ' ')} | 
+                                      O: {(r.offset >= 0 ? '+' : '')}{r.offset.toFixed(3)}
+                                  </span>
+                              </div>
+                          ))}
+                      </div>
+                  )}
+              </div>
+          </div>
+      </div>
+
     </div>
   );
 };
