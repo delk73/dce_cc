@@ -11,3 +11,10 @@ export type ColorCurve = {
 };
 
 export type Channel = 'r' | 'g' | 'b' | 'a';
+
+export type LibraryCurve = {
+  id: string;
+  name: string;
+  category: string;
+  curve: ColorCurve;
+};
