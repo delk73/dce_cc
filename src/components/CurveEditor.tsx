@@ -197,7 +197,9 @@ export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activ
         const k0 = sortedData[i];
         const k1 = sortedData[i+1];
         
-        if (interpMode === 'linear') {
+        if (interpMode === 'constant') {
+          pathD += `L ${TIME_TO_X(k1.time)},${VALUE_TO_Y(k0.value)} L ${TIME_TO_X(k1.time)},${VALUE_TO_Y(k1.value)} `;
+        } else if (interpMode === 'linear') {
           pathD += `L ${TIME_TO_X(k1.time)},${VALUE_TO_Y(k1.value)} `;
         } else {
           const dx = k1.time - k0.time;

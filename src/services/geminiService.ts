@@ -81,14 +81,16 @@ const libraryCurveSchema: Schema = {
   required: ["name", "category", "curve"]
 };
 
-export async function generateCurveBatch(prompt: string, variance: string, count: number): Promise<{name: string, category: string, curve: ColorCurve}[]> {
+export async function generateCurveBatch(prompt: string, variance: string, count: number, baseCurve?: ColorCurve): Promise<{name: string, category: string, curve: ColorCurve}[]> {
+  const baseCurveStr = baseCurve ? `\nCRITICAL: The FIRST curve (index 0) in your response array MUST exactly match this base curve data: ${JSON.stringify(baseCurve)}. Use this as the starting anchor for your sweep.` : "";
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: `You are an expert colorist and VFX artist. Generate a batch of ${count} distinct color curves over time (0.0 to 1.0) for this base scenario: "${prompt}".
-               Crucially, apply this intentional sweep or variance across the set: "${variance}".
+               Crucially, apply this intentional sweep or variance across the set: "${variance}".${baseCurveStr}
                For example, if the variance is "intensity from ember to supernova", the first curve should be dim and the last should be extremely bright/HDR.
                Use between 3 and 8 keyframes per channel (R, G, B, A) per curve.
-               Assign a short creative name and a categorized thematic string to each variant.
+               Assign a short creative name to each variant.
+               Keep the "category" string EXACTLY the same for all curves in this batch, as a thematic group name.
                Time MUST be exclusively between 0.0 and 1.0, strictly increasing from first to last point per curve.
                Values can be between 0.0 and 2.0.
                Return ONLY the JSON array matching the schema.`,

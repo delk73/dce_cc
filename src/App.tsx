@@ -4,10 +4,11 @@ import { CurveEditor } from './components/CurveEditor';
 import { CurveExporter } from './components/CurveExporter';
 import { CurvePreview } from './components/CurvePreview';
 import { generateCurve, generateCurveBatch } from './services/geminiService';
-import { Sparkles, Loader2, Library, Plus, Trash2, FolderOpen, Layers, Settings2 } from 'lucide-react';
+import { Sparkles, Loader2, Library, Plus, Trash2, FolderOpen, Layers, Settings2, Download } from 'lucide-react';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
-import { InterpMode } from './lib/curveUtils';
+import { InterpMode, computeTangents, evaluateCurve, blendSpaceCurves } from './lib/curveUtils';
+import { insertTextChunk } from './lib/pngUtils';
 
 const initialCurve: ColorCurve = {
   r: [{ time: 0, value: 0 }, { time: 1, value: 1 }],
@@ -16,9 +17,13 @@ const initialCurve: ColorCurve = {
   a: [{ time: 0, value: 1 }, { time: 1, value: 1 }]
 };
 
+import { AtlasViewer } from './components/AtlasViewer';
+
 export default function App() {
   const [library, setLibrary] = useState<LibraryCurve[]>([]);
-  const [activeCurveId, setActiveCurveId] = useState<string | null>(null);
+  const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
+  const [spaceLever, setSpaceLever] = useState<number>(0);
+  const [mainView, setMainView] = useState<'editor' | 'atlas'>('editor');
 
   const [activeChannel, setActiveChannel] = useState<Channel>('r');
   const [interpMode, setInterpMode] = useState<InterpMode>('cubic');
@@ -27,7 +32,7 @@ export default function App() {
   const [mode, setMode] = useState<'single' | 'batch'>('single');
   const [prompt, setPrompt] = useState('Fiery explosion transitioning to thick dark smoke');
   const [variance, setVariance] = useState('Intensity scaling from dying ember to supernova');
-  const [batchCount, setBatchCount] = useState<number>(3);
+  const [batchCount, setBatchCount] = useState<number>(4);
   
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,15 +44,15 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         setLibrary(parsed);
-        if (parsed.length > 0) setActiveCurveId(parsed[0].id);
+        if (parsed.length > 0) setActiveCategoryId(parsed[0].category);
       } catch (e) {
         console.error("Failed to parse library", e);
       }
     } else {
       // Default initial curve
-      const defaultCurve: LibraryCurve = { id: crypto.randomUUID(), name: 'Default Sweep', category: 'Basic', curve: initialCurve };
+      const defaultCurve: LibraryCurve = { id: crypto.randomUUID(), name: 'Default Sweep', category: 'Basic', position: 0, curve: initialCurve };
       setLibrary([defaultCurve]);
-      setActiveCurveId(defaultCurve.id);
+      setActiveCategoryId(defaultCurve.category);
     }
   }, []);
 
@@ -58,10 +63,34 @@ export default function App() {
     }
   }, [library]);
 
-  const activeCurve = library.find(c => c.id === activeCurveId)?.curve || initialCurve;
+  const activeCategoryCurves = (library.filter(c => c.category === activeCategoryId) || []).sort((a,b) => (a.position||0) - (b.position||0));
+  
+  // Ensure default position parameters exist (for backwards compat)
+  const normalizedCategoryCurves = activeCategoryCurves.map((c, i) => ({
+      ...c,
+      position: c.position ?? (activeCategoryCurves.length > 1 ? i / (activeCategoryCurves.length - 1) : 0)
+  }));
+
+  const activeSpaceCurve = normalizedCategoryCurves.length > 0 
+    ? blendSpaceCurves(normalizedCategoryCurves, spaceLever, interpMode)
+    : initialCurve;
 
   const updateActiveCurve = (newCurve: ColorCurve) => {
-    setLibrary(prev => prev.map(c => c.id === activeCurveId ? { ...c, curve: newCurve } : c));
+    if (!activeCategoryId) return;
+    const exactMatch = normalizedCategoryCurves.find(c => Math.abs(c.position - spaceLever) < 0.01);
+    
+    if (exactMatch) {
+       setLibrary(prev => prev.map(c => c.id === exactMatch.id ? { ...c, curve: newCurve } : c));
+    } else {
+       const newEntry: LibraryCurve = {
+           id: crypto.randomUUID(),
+           name: `Variant ${Math.round(spaceLever * 100)}%`,
+           category: activeCategoryId,
+           position: spaceLever,
+           curve: newCurve
+       };
+       setLibrary(prev => [...prev, newEntry]);
+    }
   };
 
   const handleGenerate = async () => {
@@ -74,23 +103,28 @@ export default function App() {
         const newEntry: LibraryCurve = { 
           id: crypto.randomUUID(), 
           name: prompt.substring(0, 20) + (prompt.length > 20 ? '...' : ''), 
-          category: 'Generated', 
+          category: prompt.substring(0, 15) + '...', 
+          position: 0,
           curve: generated 
         };
         setLibrary(prev => [newEntry, ...prev]);
-        setActiveCurveId(newEntry.id);
+        setActiveCategoryId(newEntry.category);
+        setSpaceLever(0);
       } else {
-        const generatedBatch = await generateCurveBatch(prompt, variance, batchCount);
-        const newEntries: LibraryCurve[] = generatedBatch.map(b => ({
+        const generatedBatch = await generateCurveBatch(prompt, variance, batchCount, activeSpaceCurve);
+        
+        let newCategory = prompt.substring(0, 15) + ' (Batch)';
+        
+        const newEntries: LibraryCurve[] = generatedBatch.map((b, i) => ({
           id: crypto.randomUUID(),
           name: b.name,
-          category: b.category || 'Batch',
+          category: newCategory,
+          position: i / (batchCount - 1),
           curve: b.curve
         }));
         setLibrary(prev => [...newEntries, ...prev]);
-        if (newEntries.length > 0) {
-          setActiveCurveId(newEntries[0].id);
-        }
+        setActiveCategoryId(newCategory);
+        setSpaceLever(0);
       }
     } catch (err: any) {
       console.error("Failed to generate curve:", err);
@@ -104,13 +138,90 @@ export default function App() {
     e.stopPropagation();
     setLibrary(prev => {
         const next = prev.filter(c => c.id !== id);
-        if (activeCurveId === id && next.length > 0) {
-            setActiveCurveId(next[0].id);
+        // If we deleted the last of this category, we might need to swap categories, handled safely by rendering
+        return next;
+    });
+  };
+
+  const handleDeleteCategory = (category: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLibrary(prev => {
+        const next = prev.filter(c => c.category !== category);
+        if (activeCategoryId === category && next.length > 0) {
+            setActiveCategoryId(next[0].category);
+            setSpaceLever(0);
         } else if (next.length === 0) {
-            setActiveCurveId(null);
+            setActiveCategoryId(null);
         }
         return next;
     });
+  };
+
+  const handleExportLibraryLUT = () => {
+    if (!activeCategoryId || normalizedCategoryCurves.length === 0) return;
+    
+    const width = 256;
+    const height = 256; 
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+    
+    const imageData = ctx.createImageData(width, height);
+    const data = imageData.data;
+
+    for (let y = 0; y < height; y++) {
+        const tSpace = y / (height - 1);
+        const curveObj = blendSpaceCurves(normalizedCategoryCurves, tSpace, interpMode);
+        
+        const sortedCurve = {
+            r: [...curveObj.r].sort((a, b) => a.time - b.time),
+            g: [...curveObj.g].sort((a, b) => a.time - b.time),
+            b: [...curveObj.b].sort((a, b) => a.time - b.time),
+            a: [...curveObj.a].sort((a, b) => a.time - b.time),
+        };
+        const tangents = {
+            r: computeTangents(sortedCurve.r),
+            g: computeTangents(sortedCurve.g),
+            b: computeTangents(sortedCurve.b),
+            a: computeTangents(sortedCurve.a)
+        };
+
+        for (let x = 0; x < width; x++) {
+            const t = x / (width - 1);
+            const r = evaluateCurve(sortedCurve.r, tangents.r, t, interpMode);
+            const g = evaluateCurve(sortedCurve.g, tangents.g, t, interpMode);
+            const b = evaluateCurve(sortedCurve.b, tangents.b, t, interpMode);
+            const a = evaluateCurve(sortedCurve.a, tangents.a, t, interpMode);
+            
+            const idx = (y * width + x) * 4;
+            data[idx] = Math.min(255, Math.max(0, r * 255));
+            data[idx + 1] = Math.min(255, Math.max(0, g * 255));
+            data[idx + 2] = Math.min(255, Math.max(0, b * 255));
+            data[idx + 3] = Math.min(255, Math.max(0, a * 255));
+        }
+    }
+    
+    ctx.putImageData(imageData, 0, 0);
+    const url = canvas.toDataURL('image/png');
+    
+    // Embed provenance directly into the PNG tEXt chunk
+    const metadataJSON = JSON.stringify(normalizedCategoryCurves.map(c => ({
+      name: c.name,
+      category: c.category,
+      position: c.position,
+      curve: c.curve
+    })));
+
+    const finalUrl = insertTextChunk(url, 'Provenance', metadataJSON);
+
+    const a = document.createElement('a');
+    a.href = finalUrl;
+    a.download = `SpaceAtlas_${activeCategoryId.replace(/\s+/g, '')}.png`;
+    a.click();
+    URL.revokeObjectURL(finalUrl);
   };
 
   const channelInfo = [
@@ -193,13 +304,15 @@ export default function App() {
                      </div>
                      <div className="w-24 space-y-1 shrink-0">
                         <label className="text-[10px] text-indigo-400/80 font-medium uppercase tracking-wider pl-1">Count</label>
-                        <input 
-                            type="number"
-                            min="2" max="5"
+                        <select
                             value={batchCount}
-                            onChange={(e) => setBatchCount(parseInt(e.target.value) || 3)}
-                            className="w-full bg-black border border-zinc-800 rounded-xl text-white focus:outline-none focus:border-indigo-500/50 text-sm py-3 px-4 shadow-inner text-center"
-                        />
+                            onChange={(e) => setBatchCount(parseInt(e.target.value))}
+                            className="w-full bg-black border border-zinc-800 rounded-xl text-white focus:outline-none focus:border-indigo-500/50 text-sm py-3 px-4 shadow-inner text-center appearance-none"
+                        >
+                            {[2, 4, 8, 16, 32, 64].map(n => (
+                                <option key={n} value={n}>{n}</option>
+                            ))}
+                        </select>
                      </div>
                   </motion.div>
                 )}
@@ -239,8 +352,28 @@ export default function App() {
               </AnimatePresence>
             </section>
             
-            <div className="space-y-4">
-                <div className="flex items-center justify-between">
+            <div className="flex gap-2 p-1 bg-[#09090b] rounded-lg w-fit border border-zinc-800 mb-4">
+              <button 
+                onClick={() => setMainView('editor')}
+                className={cn("px-4 py-1.5 text-xs font-medium rounded-md transition-all", mainView === 'editor' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300')}
+              >
+                Curve Setup
+              </button>
+              {normalizedCategoryCurves.length > 1 && (
+                  <button 
+                    onClick={() => setMainView('atlas')}
+                    className={cn("px-4 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-2", mainView === 'atlas' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300')}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    2D Mapping
+                  </button>
+              )}
+            </div>
+
+            {mainView === 'editor' ? (
+              <div className="flex flex-col gap-8">
+              <div className="space-y-4">
+                  <div className="flex items-center justify-between">
                 <div className="flex flex-col gap-1">
                   <h2 className="text-xl font-medium">Curve Editor</h2>
                   <div className="flex items-center gap-2">
@@ -252,6 +385,7 @@ export default function App() {
                     >
                       <option value="linear">Linear</option>
                       <option value="cubic">Cubic (Hermite)</option>
+                      <option value="constant">Constant (Stepped)</option>
                     </select>
                   </div>
                 </div>
@@ -276,7 +410,28 @@ export default function App() {
                 </div>
                 </div>
 
-                <CurveEditor curve={activeCurve} onChange={updateActiveCurve} activeChannel={activeChannel} interpMode={interpMode} />
+                {normalizedCategoryCurves.length > 1 && (
+                  <div className="flex items-center gap-4 bg-black border border-zinc-800 rounded-xl px-4 py-3 shadow-inner">
+                    <div className="flex flex-col flex-1 gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-zinc-400 font-medium tracking-wide uppercase">Space Variant</span>
+                        <span className="text-xs text-indigo-400 font-mono">{(spaceLever * 100).toFixed(0)}%</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="0" max="1" step="0.001"
+                        value={spaceLever}
+                        onChange={(e) => setSpaceLever(parseFloat(e.target.value))}
+                        className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                        style={{
+                           background: `linear-gradient(to right, rgb(99 102 241) ${spaceLever * 100}%, rgb(39 39 42) ${spaceLever * 100}%)`
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <CurveEditor curve={activeSpaceCurve} onChange={updateActiveCurve} activeChannel={activeChannel} interpMode={interpMode} />
                 
                 <div className="flex gap-8 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl">
                 <div>
@@ -291,10 +446,29 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <CurvePreview curve={activeCurve} interpMode={interpMode} />
-                <CurveExporter curve={activeCurve} interpMode={interpMode} />
+                <CurvePreview curve={activeSpaceCurve} interpMode={interpMode} />
+                <CurveExporter curve={activeSpaceCurve} interpMode={interpMode} />
             </div>
-
+            </div>
+            ) : (
+                <div className="flex flex-col gap-8 h-full min-h-[500px]">
+                    <div className="grid grid-cols-1 md:grid-cols-7 gap-8 flex-1">
+                        <div className="md:col-span-3 flex flex-col">
+                            <AtlasViewer 
+                                curves={normalizedCategoryCurves} 
+                                interpMode={interpMode} 
+                                spaceLever={spaceLever} 
+                                setSpaceLever={setSpaceLever} 
+                            />
+                        </div>
+                        <div className="md:col-span-4 flex flex-col gap-8">
+                            <CurvePreview curve={activeSpaceCurve} interpMode={interpMode} />
+                            <CurveExporter curve={activeSpaceCurve} interpMode={interpMode} />
+                        </div>
+                    </div>
+                </div>
+            )}
+            
           </div>
 
           {/* Library Sidebar */}
@@ -302,35 +476,51 @@ export default function App() {
               <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                       <Library className="w-4 h-4 text-zinc-400" />
-                      <h3 className="font-medium text-sm">Curve Library</h3>
+                      <h3 className="font-medium text-sm">Theme Spaces</h3>
                   </div>
-                  <span className="text-xs text-zinc-500 font-mono">{library.length}</span>
+                  <span className="text-xs text-zinc-500 font-mono">{Object.keys(libraryByCategory).length}</span>
               </div>
               
               <div className="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-zinc-800">
                   {Object.entries(libraryByCategory).map(([category, curves]) => (
-                      <div key={category} className="mb-4">
-                          <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 px-2 py-1.5 mb-1">{category}</h4>
-                          <div className="space-y-1">
-                              {curves.map(c => (
-                                  <button
-                                      key={c.id}
-                                      onClick={() => setActiveCurveId(c.id)}
-                                      className={cn(
-                                          "w-full flex items-center justify-between text-left px-3 py-2 rounded-lg transition-all border text-xs group",
-                                          activeCurveId === c.id 
-                                              ? "bg-indigo-500/10 border-indigo-500/50 text-white" 
-                                              : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                                      )}
-                                  >
-                                      <span className="truncate pr-2">{c.name}</span>
-                                      <Trash2 
-                                          onClick={(e) => handleDelete(c.id, e)}
-                                          className={cn("w-3.5 h-3.5 text-zinc-500 hover:text-red-400 transition-colors shrink-0", activeCurveId === c.id ? "opacity-100" : "opacity-0 group-hover:opacity-100")} 
-                                      />
-                                  </button>
-                              ))}
+                      <div key={category} className="mb-2">
+                          <div 
+                             className={cn(
+                               "w-full flex items-center justify-between text-left px-3 py-2 rounded-lg transition-all border text-xs group cursor-pointer",
+                               activeCategoryId === category
+                                 ? "bg-zinc-800 border-zinc-700 text-white" 
+                                 : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200"
+                             )}
+                             onClick={() => setActiveCategoryId(category)}
+                          >
+                             <span className="font-medium truncate">{category}</span>
+                             <div className="flex items-center gap-2">
+                                <span className="opacity-50 group-hover:opacity-100 transition-opacity">({curves.length})</span>
+                                <Trash2 
+                                  onClick={(e) => handleDeleteCategory(category, e)}
+                                  className={cn("w-3.5 h-3.5 text-zinc-500 hover:text-red-400 transition-colors shrink-0", activeCategoryId === category ? "opacity-100" : "opacity-0 group-hover:opacity-100")} 
+                                />
+                             </div>
                           </div>
+                          {activeCategoryId === category && curves.length > 1 && (
+                            <div className="pl-4 pr-1 py-1 space-y-1 my-1 border-l border-zinc-800 ml-3">
+                                {curves.sort((a,b)=>(a.position||0)-(b.position||0)).map(c => (
+                                    <button
+                                        key={c.id}
+                                        onClick={(e) => { e.stopPropagation(); setActiveCategoryId(category); setSpaceLever(c.position || 0); }}
+                                        className={cn(
+                                            "w-full flex items-center justify-between text-left px-2 py-1.5 rounded-lg transition-all text-[10px] group",
+                                            Math.abs(spaceLever - (c.position || 0)) < 0.01
+                                                ? "bg-indigo-500/10 text-indigo-300" 
+                                                : "bg-transparent text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300"
+                                        )}
+                                    >
+                                        <span className="truncate pr-2">{c.name}</span>
+                                        <span className="opacity-50 font-mono scale-90">{(c.position||0).toFixed(2)}</span>
+                                    </button>
+                                ))}
+                            </div>
+                          )}
                       </div>
                   ))}
 
@@ -341,6 +531,22 @@ export default function App() {
                       </div>
                   )}
               </div>
+
+              {library.length > 0 && (
+                  <div className="p-4 border-t border-zinc-800 bg-zinc-900/80 flex flex-col items-center justify-center space-y-2 pb-5">
+                      <button 
+                          onClick={handleExportLibraryLUT}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-xl font-medium text-sm transition-colors border border-indigo-500/20 hover:border-indigo-500/40"
+                      >
+                          <Download className="w-4 h-4" />
+                          Export 2D LUT Atlas
+                      </button>
+                      <p className="text-[10px] text-zinc-500 text-center leading-tight">
+                          256x256 texture &bull; Full Variant Space Interpolation<br/>
+                          Provenance metadata encoded in PNG
+                      </p>
+                  </div>
+              )}
           </div>
 
         </div>

@@ -1,6 +1,6 @@
 import { Keyframe } from '../types';
 
-export type InterpMode = 'linear' | 'cubic';
+export type InterpMode = 'linear' | 'cubic' | 'constant';
 
 export function computeTangents(data: Keyframe[]): number[] {
   const n = data.length;
@@ -36,7 +36,9 @@ export function evaluateCurve(keyframes: Keyframe[], tangents: number[], t: numb
       
       const tNorm = (t - k1.time) / dx;
       
-      if (interpMode === 'linear') {
+      if (interpMode === 'constant') {
+        return k1.value;
+      } else if (interpMode === 'linear') {
         return k1.value + (k2.value - k1.value) * tNorm;
       } else {
         const t2 = tNorm * tNorm;
@@ -55,4 +57,54 @@ export function evaluateCurve(keyframes: Keyframe[], tangents: number[], t: numb
     }
   }
   return 0;
+}
+
+import { ColorCurve } from '../types';
+
+export function blendCurves(c1: ColorCurve, c2: ColorCurve, blendT: number, interpMode: InterpMode): ColorCurve {
+  const getTimes = (arr: Keyframe[]) => arr.map(k => k.time);
+  
+  const blendChannel = (ch1: Keyframe[], ch2: Keyframe[]) => {
+    const times = Array.from(new Set([...getTimes(ch1), ...getTimes(ch2)])).sort((a,b) => a - b);
+    const t1 = computeTangents(ch1);
+    const t2 = computeTangents(ch2);
+    
+    return times.map(time => {
+      const val1 = evaluateCurve(ch1, t1, time, interpMode);
+      const val2 = evaluateCurve(ch2, t2, time, interpMode);
+      return {
+        time,
+        value: val1 + (val2 - val1) * blendT
+      };
+    });
+  };
+  
+  return {
+    r: blendChannel(c1.r, c2.r),
+    g: blendChannel(c1.g, c2.g),
+    b: blendChannel(c1.b, c2.b),
+    a: blendChannel(c1.a, c2.a),
+  };
+}
+
+export function blendSpaceCurves(curves: { position: number, curve: ColorCurve }[], position: number, interpMode: InterpMode): ColorCurve {
+  if (curves.length === 0) return { r:[], g:[], b:[], a:[] };
+  if (curves.length === 1) return curves[0].curve;
+  
+  const sorted = [...curves].sort((a, b) => a.position - b.position);
+  if (position <= sorted[0].position) return sorted[0].curve;
+  if (position >= sorted[sorted.length - 1].position) return sorted[sorted.length - 1].curve;
+  
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const c1 = sorted[i];
+    const c2 = sorted[i+1];
+    if (position >= c1.position && position <= c2.position) {
+      const dx = c2.position - c1.position;
+      if (dx <= 0) return c1.curve;
+      const tNorm = (position - c1.position) / dx;
+      return blendCurves(c1.curve, c2.curve, tNorm, interpMode);
+    }
+  }
+  
+  return sorted[0].curve;
 }

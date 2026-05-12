@@ -143,7 +143,7 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve, interpMode })
   }, [curve, scale, offset, enableSplits, regions, interpMode]);
 
   return (
-    <div className="flex flex-col gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+    <div className="flex flex-col gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex-1">
       <div className="flex items-center justify-between">
         <h3 className="text-zinc-100 font-medium tracking-tight">SDF Preview</h3>
       </div>
