@@ -1,11 +1,13 @@
 import React, { useRef, useState, useMemo } from 'react';
 import { ColorCurve, Channel, Keyframe } from '../types';
 import { cn } from '../lib/utils';
+import { computeTangents, InterpMode } from '../lib/curveUtils';
 
 interface CurveEditorProps {
   curve: ColorCurve;
   onChange: (curve: ColorCurve) => void;
   activeChannel: Channel;
+  interpMode: InterpMode;
 }
 
 const WIDTH = 1000;
@@ -29,7 +31,7 @@ const CHANNEL_COLORS = {
   a: '#a8a29e'
 };
 
-export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activeChannel }) => {
+export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activeChannel, interpMode }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [draggingPoint, setDraggingPoint] = useState<{ channel: Channel, index: number } | null>(null);
 
@@ -185,8 +187,33 @@ export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activ
     // We sort just for drawing, to ensure correct lines even while dragging
     const sortedData = [...data].sort((a,b) => a.time - b.time);
     
-    const pointsStr = sortedData.map((k) => `${TIME_TO_X(k.time)},${VALUE_TO_Y(k.value)}`).join(' L ');
-    const pathD = `M ${pointsStr}`;
+    let pathD = '';
+    if (sortedData.length > 0) {
+      pathD += `M ${TIME_TO_X(sortedData[0].time)},${VALUE_TO_Y(sortedData[0].value)} `;
+      
+      const tangents = computeTangents(sortedData);
+      
+      for (let i = 0; i < sortedData.length - 1; i++) {
+        const k0 = sortedData[i];
+        const k1 = sortedData[i+1];
+        
+        if (interpMode === 'linear') {
+          pathD += `L ${TIME_TO_X(k1.time)},${VALUE_TO_Y(k1.value)} `;
+        } else {
+          const dx = k1.time - k0.time;
+          const m0 = tangents[i];
+          const m1 = tangents[i+1];
+          
+          const cp1_t = k0.time + dx / 3;
+          const cp1_v = k0.value + m0 * (dx / 3);
+          
+          const cp2_t = k1.time - dx / 3;
+          const cp2_v = k1.value - m1 * (dx / 3);
+          
+          pathD += `C ${TIME_TO_X(cp1_t)},${VALUE_TO_Y(cp1_v)} ${TIME_TO_X(cp2_t)},${VALUE_TO_Y(cp2_v)} ${TIME_TO_X(k1.time)},${VALUE_TO_Y(k1.value)} `;
+        }
+      }
+    }
     
     const isActive = activeChannel === channel;
     const isDraggingThis = draggingPoint?.channel === channel;

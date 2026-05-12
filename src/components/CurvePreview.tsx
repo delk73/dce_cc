@@ -1,31 +1,14 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { ColorCurve } from '../types';
 import { cn } from '../lib/utils';
+import { evaluateCurve, computeTangents, InterpMode } from '../lib/curveUtils';
 
 interface CurvePreviewProps {
   curve: ColorCurve;
+  interpMode: InterpMode;
 }
 
-function interpolateChannel(keyframes: { time: number; value: number }[], t: number): number {
-  if (keyframes.length === 0) return 0;
-  if (keyframes.length === 1) return keyframes[0].value;
-  
-  if (t <= keyframes[0].time) return keyframes[0].value;
-  if (t >= keyframes[keyframes.length - 1].time) return keyframes[keyframes.length - 1].value;
-  
-  for (let i = 0; i < keyframes.length - 1; i++) {
-    const k1 = keyframes[i];
-    const k2 = keyframes[i + 1];
-    if (t >= k1.time && t <= k2.time) {
-      if (k2.time === k1.time) return k1.value;
-      const tNorm = (t - k1.time) / (k2.time - k1.time);
-      return k1.value + (k2.value - k1.value) * tNorm;
-    }
-  }
-  return 0;
-}
-
-export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
+export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve, interpMode }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [scale, setScale] = useState(1.0);
   const [offset, setOffset] = useState(0.0);
@@ -93,6 +76,14 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
       b: [...curve.b].sort((a, b) => a.time - b.time),
       a: [...curve.a].sort((a, b) => a.time - b.time),
     };
+    
+    // Compute tangents once per render pass
+    const tangents = {
+      r: computeTangents(sortedCurve.r),
+      g: computeTangents(sortedCurve.g),
+      b: computeTangents(sortedCurve.b),
+      a: computeTangents(sortedCurve.a)
+    };
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -129,10 +120,10 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
         }
         
         // Evaluate curve at time `t`
-        const r = interpolateChannel(sortedCurve.r, t);
-        const g = interpolateChannel(sortedCurve.g, t);
-        const b = interpolateChannel(sortedCurve.b, t);
-        const a = interpolateChannel(sortedCurve.a, t);
+        const r = evaluateCurve(sortedCurve.r, tangents.r, t, interpMode);
+        const g = evaluateCurve(sortedCurve.g, tangents.g, t, interpMode);
+        const b = evaluateCurve(sortedCurve.b, tangents.b, t, interpMode);
+        const a = evaluateCurve(sortedCurve.a, tangents.a, t, interpMode);
 
         // Clamp values to 0-255 range for Canvas API
         const r8 = Math.min(255, Math.max(0, r * 255));
@@ -149,7 +140,7 @@ export const CurvePreview: React.FC<CurvePreviewProps> = ({ curve }) => {
     }
 
     ctx.putImageData(imageData, 0, 0);
-  }, [curve, scale, offset, enableSplits, regions]);
+  }, [curve, scale, offset, enableSplits, regions, interpMode]);
 
   return (
     <div className="flex flex-col gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4">

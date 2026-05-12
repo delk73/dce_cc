@@ -4,9 +4,10 @@ import { CurveEditor } from './components/CurveEditor';
 import { CurveExporter } from './components/CurveExporter';
 import { CurvePreview } from './components/CurvePreview';
 import { generateCurve, generateCurveBatch } from './services/geminiService';
-import { Sparkles, Loader2, Library, Plus, Trash2, FolderOpen, Layers } from 'lucide-react';
+import { Sparkles, Loader2, Library, Plus, Trash2, FolderOpen, Layers, Settings2 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { InterpMode } from './lib/curveUtils';
 
 const initialCurve: ColorCurve = {
   r: [{ time: 0, value: 0 }, { time: 1, value: 1 }],
@@ -20,6 +21,7 @@ export default function App() {
   const [activeCurveId, setActiveCurveId] = useState<string | null>(null);
 
   const [activeChannel, setActiveChannel] = useState<Channel>('r');
+  const [interpMode, setInterpMode] = useState<InterpMode>('cubic');
   
   // Prompting State
   const [mode, setMode] = useState<'single' | 'batch'>('single');
@@ -239,7 +241,20 @@ export default function App() {
             
             <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                <h2 className="text-xl font-medium">Curve Editor</h2>
+                <div className="flex flex-col gap-1">
+                  <h2 className="text-xl font-medium">Curve Editor</h2>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500">Interpolation Mode:</span>
+                    <select
+                      value={interpMode}
+                      onChange={(e) => setInterpMode(e.target.value as InterpMode)}
+                      className="bg-black border border-zinc-800 text-xs text-zinc-300 rounded px-2 py-0.5 outline-none focus:border-indigo-500/50"
+                    >
+                      <option value="linear">Linear</option>
+                      <option value="cubic">Cubic (Hermite)</option>
+                    </select>
+                  </div>
+                </div>
                 <div className="flex gap-2 border border-zinc-800 p-1 rounded-full bg-[#09090b]">
                     {channelInfo.map((ci) => (
                     <button
@@ -261,7 +276,7 @@ export default function App() {
                 </div>
                 </div>
 
-                <CurveEditor curve={activeCurve} onChange={updateActiveCurve} activeChannel={activeChannel} />
+                <CurveEditor curve={activeCurve} onChange={updateActiveCurve} activeChannel={activeChannel} interpMode={interpMode} />
                 
                 <div className="flex gap-8 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl">
                 <div>
@@ -276,8 +291,8 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <CurvePreview curve={activeCurve} />
-                <CurveExporter curve={activeCurve} />
+                <CurvePreview curve={activeCurve} interpMode={interpMode} />
+                <CurveExporter curve={activeCurve} interpMode={interpMode} />
             </div>
 
           </div>
