@@ -22,8 +22,30 @@ import { AtlasViewer } from './components/AtlasViewer';
 export default function App() {
   const [library, setLibrary] = useState<LibraryCurve[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
-  const [spaceLever, setSpaceLever] = useState<number>(0);
   const [mainView, setMainView] = useState<'editor' | 'atlas'>('editor');
+  
+  const [editorState, setEditorState] = useState({ lever: 0, wrap: false, blend: 0.1 });
+  const [atlasState, setAtlasState] = useState({ lever: 0, wrap: false, blend: 0.1 });
+  
+  const [exportWidth, setExportWidth] = useState<number>(256);
+  const [exportHeight, setExportHeight] = useState<number>(256);
+
+  const spaceLever = mainView === 'editor' ? editorState.lever : atlasState.lever;
+  const wrapSpace = mainView === 'editor' ? editorState.wrap : atlasState.wrap;
+  const loopBlend = mainView === 'editor' ? editorState.blend : atlasState.blend;
+
+  const setSpaceLever = (val: number) => {
+      if (mainView === 'editor') setEditorState(prev => ({...prev, lever: val}));
+      else setAtlasState(prev => ({...prev, lever: val}));
+  };
+  const setWrapSpace = (val: boolean) => {
+      if (mainView === 'editor') setEditorState(prev => ({...prev, wrap: val}));
+      else setAtlasState(prev => ({...prev, wrap: val}));
+  };
+  const setLoopBlend = (val: number) => {
+      if (mainView === 'editor') setEditorState(prev => ({...prev, blend: val}));
+      else setAtlasState(prev => ({...prev, blend: val}));
+  };
 
   const [activeChannel, setActiveChannel] = useState<Channel>('r');
   const [interpMode, setInterpMode] = useState<InterpMode>('cubic');
@@ -71,16 +93,27 @@ export default function App() {
       position: c.position ?? (activeCategoryCurves.length > 1 ? i / (activeCategoryCurves.length - 1) : 0)
   }));
 
-  const activeSpaceCurve = normalizedCategoryCurves.length > 0 
-    ? blendSpaceCurves(normalizedCategoryCurves, spaceLever, interpMode)
+  const spaceCurves = wrapSpace && normalizedCategoryCurves.length > 0 
+    ? [
+        ...normalizedCategoryCurves.map((c) => ({
+          ...c, 
+          position: c.position * (1 - loopBlend)
+        })),
+        { ...normalizedCategoryCurves[0], position: 1.0, id: 'wrap-dummy' }
+      ]
+    : normalizedCategoryCurves;
+
+  const activeSpaceCurve = spaceCurves.length > 0 
+    ? blendSpaceCurves(spaceCurves, spaceLever, interpMode)
     : initialCurve;
 
   const updateActiveCurve = (newCurve: ColorCurve) => {
     if (!activeCategoryId) return;
-    const exactMatch = normalizedCategoryCurves.find(c => Math.abs(c.position - spaceLever) < 0.01);
+    const exactMatch = spaceCurves.find(c => Math.abs(c.position - spaceLever) < 0.01);
     
     if (exactMatch) {
-       setLibrary(prev => prev.map(c => c.id === exactMatch.id ? { ...c, curve: newCurve } : c));
+       const targetId = exactMatch.id === 'wrap-dummy' ? normalizedCategoryCurves[0].id : exactMatch.id;
+       setLibrary(prev => prev.map(c => c.id === targetId ? { ...c, curve: newCurve } : c));
     } else {
        const newEntry: LibraryCurve = {
            id: crypto.randomUUID(),
@@ -109,7 +142,8 @@ export default function App() {
         };
         setLibrary(prev => [newEntry, ...prev]);
         setActiveCategoryId(newEntry.category);
-        setSpaceLever(0);
+        setEditorState(prev => ({...prev, lever: 0}));
+        setAtlasState(prev => ({...prev, lever: 0}));
       } else {
         const generatedBatch = await generateCurveBatch(prompt, variance, batchCount, activeSpaceCurve);
         
@@ -124,7 +158,8 @@ export default function App() {
         }));
         setLibrary(prev => [...newEntries, ...prev]);
         setActiveCategoryId(newCategory);
-        setSpaceLever(0);
+        setEditorState(prev => ({...prev, lever: 0}));
+        setAtlasState(prev => ({...prev, lever: 0}));
       }
     } catch (err: any) {
       console.error("Failed to generate curve:", err);
@@ -149,7 +184,8 @@ export default function App() {
         const next = prev.filter(c => c.category !== category);
         if (activeCategoryId === category && next.length > 0) {
             setActiveCategoryId(next[0].category);
-            setSpaceLever(0);
+            setEditorState(prev => ({...prev, lever: 0}));
+            setAtlasState(prev => ({...prev, lever: 0}));
         } else if (next.length === 0) {
             setActiveCategoryId(null);
         }
@@ -160,8 +196,8 @@ export default function App() {
   const handleExportLibraryLUT = () => {
     if (!activeCategoryId || normalizedCategoryCurves.length === 0) return;
     
-    const width = 256;
-    const height = 256; 
+    const width = exportWidth;
+    const height = exportHeight; 
 
     const canvas = document.createElement('canvas');
     canvas.width = width;
@@ -174,7 +210,7 @@ export default function App() {
 
     for (let y = 0; y < height; y++) {
         const tSpace = y / (height - 1);
-        const curveObj = blendSpaceCurves(normalizedCategoryCurves, tSpace, interpMode);
+        const curveObj = blendSpaceCurves(spaceCurves, tSpace, interpMode);
         
         const sortedCurve = {
             r: [...curveObj.r].sort((a, b) => a.time - b.time),
@@ -248,7 +284,7 @@ export default function App() {
             <Sparkles className="w-3.5 h-3.5" />
             AI Studio Powered
           </div>
-          <h1 className="text-4xl font-semibold tracking-tight text-white">Color Curve Architect</h1>
+          <h1 className="text-4xl font-semibold tracking-tight text-white">Color Curve Composer</h1>
           <p className="text-zinc-400 max-w-2xl text-lg tracking-tight leading-relaxed">
             Prompt Gemini to craft multi-channel color gradients and emission curves for Unreal Engine. Edit keyframes visually and export to JSON instantly.
           </p>
@@ -415,7 +451,30 @@ export default function App() {
                     <div className="flex flex-col flex-1 gap-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-zinc-400 font-medium tracking-wide uppercase">Space Variant</span>
-                        <span className="text-xs text-indigo-400 font-mono">{(spaceLever * 100).toFixed(0)}%</span>
+                        <div className="flex items-center gap-3">
+                           {wrapSpace && (
+                               <div className="flex items-center gap-2 mr-2">
+                                   <span className="text-[10px] text-zinc-500">Blend to Start</span>
+                                   <input 
+                                       type="range"
+                                       min="0" max="0.5" step="0.01"
+                                       value={loopBlend}
+                                       onChange={(e) => setLoopBlend(parseFloat(e.target.value))}
+                                       className="w-16 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                                   />
+                               </div>
+                           )}
+                           <label className="flex items-center gap-1.5 cursor-pointer text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+                              <input 
+                                 type="checkbox" 
+                                 checked={wrapSpace} 
+                                 onChange={(e) => setWrapSpace(e.target.checked)} 
+                                 className="accent-indigo-500 w-3 h-3"
+                              />
+                              Seamless Loop
+                           </label>
+                           <span className="text-xs text-indigo-400 font-mono">{(spaceLever * 100).toFixed(0)}%</span>
+                        </div>
                       </div>
                       <input 
                         type="range" 
@@ -455,10 +514,14 @@ export default function App() {
                     <div className="grid grid-cols-1 md:grid-cols-7 gap-8 flex-1">
                         <div className="md:col-span-3 flex flex-col">
                             <AtlasViewer 
-                                curves={normalizedCategoryCurves} 
+                                curves={spaceCurves} 
                                 interpMode={interpMode} 
                                 spaceLever={spaceLever} 
                                 setSpaceLever={setSpaceLever} 
+                                wrapSpace={wrapSpace}
+                                setWrapSpace={setWrapSpace}
+                                loopBlend={loopBlend}
+                                setLoopBlend={setLoopBlend}
                             />
                         </div>
                         <div className="md:col-span-4 flex flex-col gap-8">
@@ -491,7 +554,13 @@ export default function App() {
                                  ? "bg-zinc-800 border-zinc-700 text-white" 
                                  : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200"
                              )}
-                             onClick={() => setActiveCategoryId(category)}
+                             onClick={() => {
+                                 if (activeCategoryId !== category) {
+                                     setEditorState(prev => ({...prev, lever: 0}));
+                                     setAtlasState(prev => ({...prev, lever: 0}));
+                                 }
+                                 setActiveCategoryId(category);
+                             }}
                           >
                              <span className="font-medium truncate">{category}</span>
                              <div className="flex items-center gap-2">
@@ -507,7 +576,13 @@ export default function App() {
                                 {curves.sort((a,b)=>(a.position||0)-(b.position||0)).map(c => (
                                     <button
                                         key={c.id}
-                                        onClick={(e) => { e.stopPropagation(); setActiveCategoryId(category); setSpaceLever(c.position || 0); }}
+                                        onClick={(e) => { 
+                                            e.stopPropagation(); 
+                                            setActiveCategoryId(category); 
+                                            setEditorState(prev => ({...prev, lever: Math.max(0, Math.min(1, c.position || 0))}));
+                                            setAtlasState(prev => ({...prev, lever: Math.max(0, Math.min(1, c.position || 0))}));
+                                            setMainView('editor');
+                                        }}
                                         className={cn(
                                             "w-full flex items-center justify-between text-left px-2 py-1.5 rounded-lg transition-all text-[10px] group",
                                             Math.abs(spaceLever - (c.position || 0)) < 0.01
@@ -533,16 +608,49 @@ export default function App() {
               </div>
 
               {library.length > 0 && (
-                  <div className="p-4 border-t border-zinc-800 bg-zinc-900/80 flex flex-col items-center justify-center space-y-2 pb-5">
+                  <div className="p-4 border-t border-zinc-800 bg-zinc-900/80 flex flex-col items-center justify-center space-y-3 pb-5">
+                      <div className="flex w-full gap-2 text-xs">
+                          <div className="flex-1 flex flex-col gap-1">
+                              <label className="text-zinc-500 font-medium">Width (Time)</label>
+                              <select 
+                                  value={exportWidth}
+                                  onChange={(e) => setExportWidth(Number(e.target.value))}
+                                  className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-2 py-1.5 text-zinc-300 outline-none focus:border-indigo-500"
+                              >
+                                  <option value={64}>64</option>
+                                  <option value={128}>128</option>
+                                  <option value={256}>256</option>
+                                  <option value={512}>512</option>
+                                  <option value={1024}>1024</option>
+                                  <option value={2048}>2048</option>
+                              </select>
+                          </div>
+                          <div className="flex-1 flex flex-col gap-1">
+                              <label className="text-zinc-500 font-medium">Height (Variants)</label>
+                              <select 
+                                  value={exportHeight}
+                                  onChange={(e) => setExportHeight(Number(e.target.value))}
+                                  className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-2 py-1.5 text-zinc-300 outline-none focus:border-indigo-500"
+                              >
+                                  <option value={64}>64</option>
+                                  <option value={128}>128</option>
+                                  <option value={256}>256</option>
+                                  <option value={512}>512</option>
+                                  <option value={1024}>1024</option>
+                                  <option value={2048}>2048</option>
+                              </select>
+                          </div>
+                      </div>
+
                       <button 
                           onClick={handleExportLibraryLUT}
-                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-xl font-medium text-sm transition-colors border border-indigo-500/20 hover:border-indigo-500/40"
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-xl font-medium text-sm transition-colors border border-indigo-500/20 hover:border-indigo-500/40 mt-1"
                       >
                           <Download className="w-4 h-4" />
                           Export 2D LUT Atlas
                       </button>
                       <p className="text-[10px] text-zinc-500 text-center leading-tight">
-                          256x256 texture &bull; Full Variant Space Interpolation<br/>
+                          {exportWidth}x{exportHeight} texture &bull; Full Variant Space Interpolation<br/>
                           Provenance metadata encoded in PNG
                       </p>
                   </div>

@@ -7,9 +7,13 @@ interface AtlasViewerProps {
   interpMode: InterpMode;
   spaceLever: number;
   setSpaceLever: (val: number) => void;
+  wrapSpace: boolean;
+  setWrapSpace: (val: boolean) => void;
+  loopBlend: number;
+  setLoopBlend: (val: number) => void;
 }
 
-export const AtlasViewer: React.FC<AtlasViewerProps> = ({ curves, interpMode, spaceLever, setSpaceLever }) => {
+export const AtlasViewer: React.FC<AtlasViewerProps> = ({ curves, interpMode, spaceLever, setSpaceLever, wrapSpace, setWrapSpace, loopBlend, setLoopBlend }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   useEffect(() => {
@@ -70,6 +74,29 @@ export const AtlasViewer: React.FC<AtlasViewerProps> = ({ curves, interpMode, sp
     <div className="flex flex-col gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4">
       <div className="flex items-center justify-between">
         <h3 className="text-zinc-100 font-medium tracking-tight">2D Interpolation Atlas</h3>
+        <div className="flex items-center gap-4">
+            {wrapSpace && (
+                <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Blend</span>
+                    <input 
+                        type="range"
+                        min="0" max="0.5" step="0.01"
+                        value={loopBlend}
+                        onChange={(e) => setLoopBlend(parseFloat(e.target.value))}
+                        className="w-16 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    />
+                </div>
+            )}
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+                <input 
+                    type="checkbox" 
+                    checked={wrapSpace} 
+                    onChange={(e) => setWrapSpace(e.target.checked)} 
+                    className="accent-indigo-500 w-3 h-3"
+                />
+                Seamless Loop
+            </label>
+        </div>
       </div>
       
       <div className="flex gap-6 items-stretch">
