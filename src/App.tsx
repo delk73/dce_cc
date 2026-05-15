@@ -408,6 +408,11 @@ export default function App() {
 
             {mainView === 'editor' ? (
               <div className="flex flex-col gap-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <CurvePreview curve={activeSpaceCurve} interpMode={interpMode} />
+                  <CurveExporter curve={activeSpaceCurve} interpMode={interpMode} />
+              </div>
+
               <div className="space-y-4">
                   <div className="flex items-center justify-between">
                 <div className="flex flex-col gap-1">
@@ -504,10 +509,6 @@ export default function App() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <CurvePreview curve={activeSpaceCurve} interpMode={interpMode} />
-                <CurveExporter curve={activeSpaceCurve} interpMode={interpMode} />
-            </div>
             </div>
             ) : (
                 <div className="flex flex-col gap-8 h-full min-h-[500px]">

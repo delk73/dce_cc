@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo, useEffect } from 'react';
 import { ColorCurve, Channel, Keyframe } from '../types';
 import { cn } from '../lib/utils';
 import { computeTangents, InterpMode } from '../lib/curveUtils';
@@ -34,6 +34,15 @@ const CHANNEL_COLORS = {
 export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activeChannel, interpMode }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [draggingPoint, setDraggingPoint] = useState<{ channel: Channel, index: number } | null>(null);
+  const [localCurve, setLocalCurve] = useState<ColorCurve>(curve);
+  const lastUpdateRef = useRef<number>(0);
+
+  // Sync with external curve when not dragging
+  useEffect(() => {
+    if (!draggingPoint) {
+      setLocalCurve(curve);
+    }
+  }, [curve, draggingPoint]);
 
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>, channel: Channel, pointIndex: number) => {
     e.stopPropagation();
@@ -53,22 +62,25 @@ export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activ
     const newTime = X_TO_TIME(x);
     const newValue = Y_TO_VALUE(y);
 
-    const channelData = [...curve[draggingPoint.channel]];
-    
-    // Sort array so times remain monotonically increasing, except the one we are dragging? 
-    // Actually, UE allows keyframes to swap order. We will sort them upon release if we want to be safe, 
-    // or just allow dragging and sort immediately.
-    // If we sort immediately, the index changes! We can't sort while dragging if we identify by index.
-    // Let's just update the time and value for the specific point directly here.
+    const channelData = [...localCurve[draggingPoint.channel]];
     channelData[draggingPoint.index] = {
       time: newTime,
       value: newValue
     };
 
-    onChange({
-      ...curve,
+    const newCurve = {
+      ...localCurve,
       [draggingPoint.channel]: channelData
-    });
+    };
+    
+    setLocalCurve(newCurve);
+
+    // Throttle external onChange to avoid extreme lag from heavy parent components
+    const now = performance.now();
+    if (now - lastUpdateRef.current > 60) {
+      onChange(newCurve);
+      lastUpdateRef.current = now;
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -78,13 +90,14 @@ export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activ
         target.releasePointerCapture(e.pointerId);
       }
       
-      // Sort the channel by time after releasing
-      const channelData = [...curve[draggingPoint.channel]].sort((a, b) => a.time - b.time);
-      onChange({
-        ...curve,
+      const channelData = [...localCurve[draggingPoint.channel]].sort((a, b) => a.time - b.time);
+      const newCurve = {
+        ...localCurve,
         [draggingPoint.channel]: channelData
-      });
+      };
       
+      setLocalCurve(newCurve);
+      onChange(newCurve);
       setDraggingPoint(null);
     }
   };
@@ -100,26 +113,31 @@ export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activ
     const newTime = X_TO_TIME(x);
     const newValue = Y_TO_VALUE(y);
 
-    const channelData = [...curve[activeChannel], { time: newTime, value: newValue }].sort((a, b) => a.time - b.time);
-    onChange({
-      ...curve,
+    const channelData = [...localCurve[activeChannel], { time: newTime, value: newValue }].sort((a, b) => a.time - b.time);
+    const newCurve = {
+      ...localCurve,
       [activeChannel]: channelData
-    });
+    };
+    
+    setLocalCurve(newCurve);
+    onChange(newCurve);
   };
 
   const handlePointContextMenu = (e: React.MouseEvent, channel: Channel, index: number) => {
     e.preventDefault();
     e.stopPropagation();
     
-    const channelData = [...curve[channel]];
-    // Prevent removing the very last point
+    const channelData = [...localCurve[channel]];
     if (channelData.length <= 1) return;
     
     channelData.splice(index, 1);
-    onChange({
-      ...curve,
+    const newCurve = {
+      ...localCurve,
       [channel]: channelData
-    });
+    };
+    
+    setLocalCurve(newCurve);
+    onChange(newCurve);
   };
 
   const drawGrid = () => {
@@ -181,7 +199,7 @@ export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activ
   };
 
   const drawCurve = (channel: Channel) => {
-    const data = curve[channel];
+    const data = localCurve[channel];
     if (data.length === 0) return null;
 
     // We sort just for drawing, to ensure correct lines even while dragging
@@ -242,7 +260,7 @@ export const CurveEditor: React.FC<CurveEditorProps> = ({ curve, onChange, activ
                     fill={CHANNEL_COLORS[channel]}
                     stroke="#18181b"
                     strokeWidth={2}
-                    className="cursor-pointer hover:stroke-white transition-all outline-none"
+                    className="cursor-pointer hover:stroke-white transition-colors outline-none"
                     onPointerDown={(e) => handlePointerDown(e, channel, i)}
                     onContextMenu={(e) => handlePointContextMenu(e, channel, i)}
                 />
